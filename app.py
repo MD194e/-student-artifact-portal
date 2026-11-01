@@ -75,7 +75,7 @@ def init_db():
 def page(body, **kw):
     template = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Artifact Portal</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>body{background:#f3f6fb}.navbar{background:#102746}.card{border:0;border-radius:14px;box-shadow:0 4px 18px #10274612}.hero{background:linear-gradient(120deg,#102746,#176b87);color:white;border-radius:18px;padding:30px}</style>
+    <style>body{background:#f3f6fb;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}.navbar{background:#102746}.card{border:0;border-radius:14px;box-shadow:0 4px 18px #10274612}.hero{background:linear-gradient(120deg,#102746,#176b87);color:white;border-radius:18px;padding:30px}.stat{background:#fff;border-radius:14px;box-shadow:0 4px 18px #10274612;padding:18px}.page-title{font-weight:700}.btn{border-radius:10px}.form-label{font-weight:600}</style>
     </head><body><nav class="navbar navbar-dark p-3"><div class="container"><a class="navbar-brand" href="/">Artifact Portal</a>
     <span class="text-white">{% if session.get('name') %}{{session.get('name')}} · {{session.get('role')}} · <a href="/logout">Logout</a>{% endif %}</span></div></nav>
     <main class="container py-4">{% for m in get_flashed_messages() %}<div class="alert alert-info">{{m}}</div>{% endfor %}""" + body + """</main></body></html>"""
@@ -86,8 +86,11 @@ def home():
     if session.get("role") == "teacher": return redirect("/teacher")
     if session.get("role") == "student": return redirect("/student")
     return page("""<div class="hero mb-4"><h1>Automated Student Artifact Submission & Grading Portal</h1>
-    <p>Upload work, track submissions, and receive grades and feedback.</p><a class="btn btn-light" href="/login">Login</a>
-    <a class="btn btn-outline-light" href="/register">Student registration</a></div>""")
+    <p>Upload work, track submissions, and receive grades and feedback.</p><div class="mt-3"><a class="btn btn-light" href="/login">Login</a>
+    <a class="btn btn-outline-light" href="/register">Student registration</a></div></div>
+    <div class="row g-3 mt-4"><div class="col-md-4"><div class="card stat p-3"><h5 class="mb-1">Submit</h5><p class="mb-0">Students upload allowed artifact files.</p></div></div>
+    <div class="col-md-4"><div class="card stat p-3"><h5 class="mb-1">Track</h5><p class="mb-0">Submissions are logged per assignment.</p></div></div>
+    <div class="col-md-4"><div class="card stat p-3"><h5 class="mb-1">Grade</h5><p class="mb-0">Teachers give marks and feedback.</p></div></div></div>""")
 
 @app.route("/register", methods=["GET","POST"])
 def register():
@@ -102,12 +105,12 @@ def register():
                     (*vals, generate_password_hash(pw), "student"))
                 flash("Account created. Log in now."); return redirect("/login")
             except sqlite3.IntegrityError: flash("Email or enrollment number already exists.")
-    return page("""<div class="card p-4 mx-auto" style="max-width:600px"><h2>Student registration</h2>
-    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="form-control my-2" name="name" placeholder="Full name" required>
-    <input class="form-control my-2" name="enrollment" placeholder="Enrollment number" required>
-    <input class="form-control my-2" type="email" name="email" placeholder="Email" required>
-    <input class="form-control my-2" type="password" name="password" placeholder="Password (8+ characters)" minlength="8" required>
-    <button class="btn btn-primary mt-2">Register</button></form></div>""")
+    return page("""<div class="card p-4 mx-auto" style="max-width:520px"><h2 class="mb-3">Student registration</h2>
+    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="mb-3"><label class="form-label">Full name</label><input class="form-control" name="name" placeholder="Full name" required></div>
+    <div class="mb-3"><label class="form-label">Enrollment number</label><input class="form-control" name="enrollment" placeholder="Enrollment number" required></div>
+    <div class="mb-3"><label class="form-label">Email</label><input class="form-control" type="email" name="email" placeholder="Email" required></div>
+    <div class="mb-3"><label class="form-label">Password</label><input class="form-control" type="password" name="password" placeholder="Password (8+ characters)" minlength="8" required></div>
+    <button class="btn btn-primary w-100">Register</button></form></div>""")
 
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 900
@@ -133,10 +136,10 @@ def login():
             flash("Too many failed login attempts. Please wait before trying again.")
             return redirect("/login")
         flash("Invalid email or password.")
-    return page("""<div class="card p-4 mx-auto" style="max-width:600px"><h2>Login</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input class="form-control my-2" type="email" name="email" placeholder="Email" required>
-    <input class="form-control my-2" type="password" name="password" placeholder="Password" required>
-    <button class="btn btn-primary mt-2">Login</button></form></div>""")
+    return page("""<div class="card p-4 mx-auto" style="max-width:520px"><h2 class="mb-3">Login</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="mb-3"><label class="form-label">Email</label><input class="form-control" type="email" name="email" placeholder="Email" required></div>
+    <div class="mb-3"><label class="form-label">Password</label><input class="form-control" type="password" name="password" placeholder="Password" required></div>
+    <button class="btn btn-primary w-100">Login</button></form></div>""")
 
 @app.route("/logout")
 def logout():
@@ -147,9 +150,9 @@ def teacher():
     if session.get("role") != "teacher": return redirect("/login")
     with connect() as c: rows=c.execute("""SELECT a.*,COUNT(s.id) n FROM assignments a LEFT JOIN submissions s
       ON a.id=s.assignment_id GROUP BY a.id ORDER BY a.id DESC""").fetchall()
-    return page("""<h2>Teacher dashboard</h2><a class="btn btn-primary mb-3" href="/new">Create assignment</a>
-    {% for a in rows %}<div class="card p-3 mb-3"><h5>{{a['title']}}</h5><p>Due {{a['due_at']}} · {{a['n']}} submissions · {{a['max_marks']}} marks</p>
-    <a href="/review/{{a['id']}}">Review submissions</a></div>{% else %}<p>No assignments created.</p>{% endfor %}""", rows=rows)
+    return page("""<div class="d-flex justify-content-between align-items-center mb-4"><h2 class="page-title mb-0">Teacher dashboard</h2><a class="btn btn-primary" href="/new">Create assignment</a></div>
+    <div class="row">{% for a in rows %}<div class="col-md-6"><div class="card p-3 mb-3"><h5>{{a['title']}}</h5><p>Due {{a['due_at']}} · {{a['n']}} submissions · {{a['max_marks']}} marks</p>
+    <a href="/review/{{a['id']}}">Review submissions</a></div></div>{% else %}<p>No assignments created.</p>{% endfor %}</div>""", rows=rows)
 
 @app.route("/new", methods=["GET","POST"])
 def new_assignment():
@@ -163,13 +166,13 @@ def new_assignment():
                request.form.get("allowed_ext","pdf,docx,txt,zip").replace(" ","").lower(),session["user_id"]))
             flash("Assignment created."); return redirect("/teacher")
         except Exception: flash("Check the assignment details.")
-    return page("""<div class="card p-4"><h2>Create assignment</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>Title</label><input class="form-control mb-3" name="title" required>
-    <label>Description</label><textarea class="form-control mb-3" name="description"></textarea>
-    <label>Deadline</label><input class="form-control mb-3" type="datetime-local" name="due_at" required>
-    <label>Maximum marks</label><input class="form-control mb-3" type="number" name="max_marks" value="100" min="1" required>
-    <label>Allowed extensions</label><input class="form-control mb-3" name="allowed_ext" value="pdf,docx,txt,zip,py,java">
-    <button class="btn btn-primary">Publish</button></form></div>""")
+    return page("""<div class="card p-4 mx-auto" style="max-width:620px"><h2 class="mb-3">Create assignment</h2>
+    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="mb-3"><label class="form-label">Title</label><input class="form-control" name="title" required></div>
+    <div class="mb-3"><label class="form-label">Description</label><textarea class="form-control" name="description"></textarea></div>
+    <div class="mb-3"><label class="form-label">Deadline</label><input class="form-control" type="datetime-local" name="due_at" required></div>
+    <div class="mb-3"><label class="form-label">Maximum marks</label><input class="form-control" type="number" name="max_marks" value="100" min="1" required></div>
+    <div class="mb-3"><label class="form-label">Allowed extensions</label><input class="form-control" type="text" name="allowed_ext" value="pdf,docx,txt,zip,py,java"></div>
+    <button class="btn btn-primary w-100">Publish</button></form></div>""")
 
 @app.route("/student")
 def student():
@@ -177,7 +180,7 @@ def student():
     with connect() as c: rows=c.execute("""SELECT a.*,s.id sid,s.original,s.marks,s.feedback FROM assignments a
       LEFT JOIN submissions s ON a.id=s.assignment_id AND s.student_id=? ORDER BY a.due_at""",(session["user_id"],)).fetchall()
     now=datetime.now()
-    return page("""<h2>Student dashboard</h2><div class="row g-3">{% for a in rows %}<div class="col-md-6"><div class="card p-4">
+    return page("""<h2 class="page-title mb-4">Student dashboard</h2><div class="row g-3">{% for a in rows %}<div class="col-md-6"><div class="card p-4">
     <h5>{{a['title']}}</h5><p>{{a['description'] or ''}}</p><p>Deadline: {{a['due_at']}} · Max marks: {{a['max_marks']}}</p>
     {% if a['sid'] %}<p>Submitted file: {{a['original']}}</p>{% if a['marks'] is not none %}<b>Grade: {{a['marks']}} / {{a['max_marks']}}</b><p>Feedback: {{a['feedback'] or 'No feedback'}}</p>{% endif %}
     {% elif now < a['due_at'] %}<form method="post" enctype="multipart/form-data" action="/submit/{{a['id']}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="form-control mb-2" type="file" name="artifact" required><button class="btn btn-primary">Submit</button></form>
@@ -214,8 +217,10 @@ def review(aid):
         rows=c.execute("""SELECT s.*,u.name,u.enrollment FROM submissions s JOIN users u ON u.id=s.student_id
         WHERE s.assignment_id=? ORDER BY s.submitted_at DESC""",(aid,)).fetchall()
     if not a: abort(404)
-    return page("""<h2>{{a['title']}} submissions</h2>{% for s in rows %}<div class="card p-4 mb-3">
-    <h5>{{s['name']}} ({{s['enrollment']}})</h5><p>{{s['original']}} · {{s['submitted_at']}}</p><a href="/download/{{s['id']}}">Download artifact</a>
+    return page("""<div class="d-flex justify-content-between align-items-center mb-4"><h2 class="page-title mb-0">{{a['title']}} submissions</h2><a class="btn btn-outline-secondary" href="/teacher">Back to dashboard</a></div>
+    {% for s in rows %}<div class="card p-4 mb-3">
+    <div class="d-flex justify-content-between"><h5 class="mb-1">{{s['name']}} ({{s['enrollment']}})</h5><a class="btn btn-sm btn-outline-primary" href="/download/{{s['id']}}">Download artifact</a></div>
+    <p class="text-muted mb-2">{{s['original']}} · {{s['submitted_at']}}</p>
     <form method="post" action="/grade/{{s['id']}}" class="row g-2 mt-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-3"><input class="form-control" type="number" name="marks" min="0" max="{{a['max_marks']}}" step="0.5" value="{{s['marks'] if s['marks'] is not none else ''}}" required></div>
     <div class="col-md-7"><input class="form-control" name="feedback" value="{{s['feedback'] or ''}}" placeholder="Feedback"></div><div class="col-md-2"><button class="btn btn-primary">Save grade</button></div></form></div>
     {% else %}<p>No submissions yet.</p>{% endfor %}""", a=a, rows=rows)

@@ -1,6 +1,7 @@
-import os, sqlite3, uuid
+import os, sqlite3, re, time, uuid
 from datetime import datetime
 from flask import Flask, request, redirect, session, render_template_string, send_from_directory, abort, flash
+from flask_wtf.csrf import CSRFProtect, CSRFError
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -15,7 +16,31 @@ app.secret_key = os.environ.get("SECRET_KEY")
 if not app.secret_key:
     raise RuntimeError("SECRET_KEY environment variable must be configured.")
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+csrf = CSRFProtect(app)
 ALLOWED = {"pdf","docx","txt","zip","png","jpg","jpeg","py","java","cpp","html","css","js"}
+EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    flash("Security token missing or invalid. Please reload the page and try again.")
+    return redirect(request.referrer or "/")
+
+@app.after_request
+def add_security_headers(resp):
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    resp.headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data: https://cdn.jsdelivr.net; font-src 'self'; connect-src 'self'; script-src 'self'")
+    return resp
 
 def connect():
     c = sqlite3.connect(DB)
@@ -33,7 +58,7 @@ def init_db():
           student_id INTEGER, stored TEXT, original TEXT, submitted_at TEXT, marks REAL, feedback TEXT,
           UNIQUE(assignment_id,student_id));
         """)
-                if not c.execute("SELECT id FROM users WHERE email='teacher@portal.local'").fetchone():
+        if not c.execute("SELECT id FROM users WHERE email='teacher@portal.local'").fetchone():
             teacher_password = os.environ.get("TEACHER_PASSWORD")
             if teacher_password:
                 c.execute(
@@ -69,7 +94,7 @@ def register():
     if request.method == "POST":
         vals = [request.form.get(k,"").strip() for k in ("name","enrollment","email")]
         pw = request.form.get("password","")
-        if not all(vals) or len(pw)<8: flash("Fill all fields; password must be at least 8 characters.")
+        if not all(vals) or not EMAIL_RE.match(vals[2]) or len(pw)<8: flash("Fill all fields with a valid email; password must be at least 8 characters.")
         else:
             try:
                 with connect() as c:
@@ -78,21 +103,37 @@ def register():
                 flash("Account created. Log in now."); return redirect("/login")
             except sqlite3.IntegrityError: flash("Email or enrollment number already exists.")
     return page("""<div class="card p-4 mx-auto" style="max-width:600px"><h2>Student registration</h2>
-    <form method="post"><input class="form-control my-2" name="name" placeholder="Full name" required>
+    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="form-control my-2" name="name" placeholder="Full name" required>
     <input class="form-control my-2" name="enrollment" placeholder="Enrollment number" required>
     <input class="form-control my-2" type="email" name="email" placeholder="Email" required>
     <input class="form-control my-2" type="password" name="password" placeholder="Password (8+ characters)" minlength="8" required>
     <button class="btn btn-primary mt-2">Register</button></form></div>""")
 
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_WINDOW_SECONDS = 900
+login_attempts = {}
+
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
-        with connect() as c: u = c.execute("SELECT * FROM users WHERE email=?", (request.form.get("email","").lower().strip(),)).fetchone()
-        if u and check_password_hash(u["password"], request.form.get("password","")):
+        key = request.form.get("email","").lower().strip() or "_unknown_"
+        now_ts = time.time()
+        count, first_ts = login_attempts.get(key, (0, 0))
+        if now_ts - first_ts > LOGIN_WINDOW_SECONDS:
+            count, first_ts = 0, now_ts
+        count += 1
+        login_attempts[key] = (count, first_ts)
+        locked = count >= LOGIN_MAX_ATTEMPTS
+        with connect() as c: u = c.execute("SELECT * FROM users WHERE email=?", (key,)).fetchone()
+        if u and check_password_hash(u["password"], request.form.get("password","")) and not locked:
+            login_attempts.pop(key, None)
             session.clear(); session.update(user_id=u["id"], name=u["name"], role=u["role"])
             return redirect("/teacher" if u["role"]=="teacher" else "/student")
+        if locked:
+            flash("Too many failed login attempts. Please wait before trying again.")
+            return redirect("/login")
         flash("Invalid email or password.")
-    return page("""<div class="card p-4 mx-auto" style="max-width:600px"><h2>Login</h2><form method="post">
+    return page("""<div class="card p-4 mx-auto" style="max-width:600px"><h2>Login</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input class="form-control my-2" type="email" name="email" placeholder="Email" required>
     <input class="form-control my-2" type="password" name="password" placeholder="Password" required>
     <button class="btn btn-primary mt-2">Login</button></form></div>""")
@@ -122,7 +163,7 @@ def new_assignment():
                request.form.get("allowed_ext","pdf,docx,txt,zip").replace(" ","").lower(),session["user_id"]))
             flash("Assignment created."); return redirect("/teacher")
         except Exception: flash("Check the assignment details.")
-    return page("""<div class="card p-4"><h2>Create assignment</h2><form method="post">
+    return page("""<div class="card p-4"><h2>Create assignment</h2><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Title</label><input class="form-control mb-3" name="title" required>
     <label>Description</label><textarea class="form-control mb-3" name="description"></textarea>
     <label>Deadline</label><input class="form-control mb-3" type="datetime-local" name="due_at" required>
@@ -139,7 +180,7 @@ def student():
     return page("""<h2>Student dashboard</h2><div class="row g-3">{% for a in rows %}<div class="col-md-6"><div class="card p-4">
     <h5>{{a['title']}}</h5><p>{{a['description'] or ''}}</p><p>Deadline: {{a['due_at']}} · Max marks: {{a['max_marks']}}</p>
     {% if a['sid'] %}<p>Submitted file: {{a['original']}}</p>{% if a['marks'] is not none %}<b>Grade: {{a['marks']}} / {{a['max_marks']}}</b><p>Feedback: {{a['feedback'] or 'No feedback'}}</p>{% endif %}
-    {% elif now < a['due_at'] %}<form method="post" enctype="multipart/form-data" action="/submit/{{a['id']}}"><input class="form-control mb-2" type="file" name="artifact" required><button class="btn btn-primary">Submit</button></form>
+    {% elif now < a['due_at'] %}<form method="post" enctype="multipart/form-data" action="/submit/{{a['id']}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="form-control mb-2" type="file" name="artifact" required><button class="btn btn-primary">Submit</button></form>
     {% else %}<span class="text-danger">Deadline passed</span>{% endif %}</div></div>{% else %}<p>No assignments available.</p>{% endfor %}</div>""", rows=rows, now=now.isoformat(timespec="minutes"))
 
 @app.route("/submit/<int:aid>", methods=["POST"])
@@ -175,7 +216,7 @@ def review(aid):
     if not a: abort(404)
     return page("""<h2>{{a['title']}} submissions</h2>{% for s in rows %}<div class="card p-4 mb-3">
     <h5>{{s['name']}} ({{s['enrollment']}})</h5><p>{{s['original']}} · {{s['submitted_at']}}</p><a href="/download/{{s['id']}}">Download artifact</a>
-    <form method="post" action="/grade/{{s['id']}}" class="row g-2 mt-2"><div class="col-md-3"><input class="form-control" type="number" name="marks" min="0" max="{{a['max_marks']}}" step="0.5" value="{{s['marks'] if s['marks'] is not none else ''}}" required></div>
+    <form method="post" action="/grade/{{s['id']}}" class="row g-2 mt-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-3"><input class="form-control" type="number" name="marks" min="0" max="{{a['max_marks']}}" step="0.5" value="{{s['marks'] if s['marks'] is not none else ''}}" required></div>
     <div class="col-md-7"><input class="form-control" name="feedback" value="{{s['feedback'] or ''}}" placeholder="Feedback"></div><div class="col-md-2"><button class="btn btn-primary">Save grade</button></div></form></div>
     {% else %}<p>No submissions yet.</p>{% endfor %}""", a=a, rows=rows)
 
